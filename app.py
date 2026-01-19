@@ -4,9 +4,11 @@ Asset Viewer Web Application
 Displays assets from pre-parsed JSON data in a searchable grid with detail view
 """
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request, Response
 import json
 import os
+import csv
+import io
 
 app = Flask(__name__)
 
@@ -147,6 +149,96 @@ def get_asset_detail(asset_id):
         },
         'custom_fields': custom_fields
     })
+
+
+@app.route('/api/export', methods=['POST'])
+def export_csv():
+    """Export filtered assets to CSV in template format."""
+    load_data()
+
+    # Get list of asset IDs to export from request
+    asset_ids = request.json.get('asset_ids', [])
+
+    if not asset_ids:
+        return jsonify({'error': 'No assets to export'}), 400
+
+    # CSV columns matching template
+    fieldnames = [
+        'Username', 'AssetName', 'Asset Category', 'Asset Category FieldName',
+        'Field Value', 'Brand Name', 'Model Name', 'Customer Name',
+        'Employee of', 'Asset Location', 'Comment', 'CreatedDateTime', 'Software Inventory'
+    ]
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+
+    for asset_id in asset_ids:
+        asset_id = str(asset_id)
+        if asset_id not in DATA['assets']:
+            continue
+
+        asset = DATA['assets'][asset_id]
+
+        # Get lookups
+        category = DATA['asset_categories'].get(asset['FKAssetCategoryId'], '')
+        brand = DATA['brands'].get(asset['FKBrandId'], '')
+        model = DATA['models'].get(asset['FKModelId'], '')
+        customer_info = DATA['customers'].get(asset['FKOwnerId'], {})
+        customer_name = customer_info.get('CustomerName', '')
+        company_name = customer_info.get('CompanyName', '')
+
+        # Get created by
+        updates = sorted(DATA['asset_updates'].get(asset_id, []), key=lambda x: x['date'])
+        created_by = ""
+        if updates:
+            first_update = updates[0]
+            if first_update['user_type'] == '1':
+                created_by = DATA['engineers'].get(first_update['user_id'], '')
+            elif first_update['user_type'] == '2':
+                cust = DATA['customers'].get(first_update['user_id'], {})
+                created_by = cust.get('CustomerName', '')
+
+        # Base row data (common to all rows for this asset)
+        base_row = {
+            'Username': created_by,
+            'AssetName': asset['AssetName'],
+            'Asset Category': category,
+            'Brand Name': brand,
+            'Model Name': model,
+            'Customer Name': customer_name,
+            'Employee of': company_name,
+            'Asset Location': asset['AssetLocation'],
+            'Comment': asset['Comment'].replace('\n', ' ').replace('\r', '') if asset['Comment'] else '',
+            'CreatedDateTime': asset['DateCreated'],
+            'Software Inventory': ''
+        }
+
+        # Get custom fields for this asset
+        custom_fields = DATA['asset_field_values'].get(asset_id, {})
+
+        if custom_fields:
+            # Write one row per custom field
+            for field_name, field_value in custom_fields.items():
+                if field_value:  # Only include non-empty fields
+                    row = base_row.copy()
+                    row['Asset Category FieldName'] = field_name
+                    row['Field Value'] = field_value.replace('\n', ' ').replace('\r', '') if field_value else ''
+                    writer.writerow(row)
+        else:
+            # Write one row with empty custom field columns if no custom fields
+            row = base_row.copy()
+            row['Asset Category FieldName'] = ''
+            row['Field Value'] = ''
+            writer.writerow(row)
+
+    # Create response
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=cmdb_export.csv'}
+    )
 
 
 if __name__ == '__main__':

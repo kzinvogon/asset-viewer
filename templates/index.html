@@ -138,6 +138,46 @@
             font-family: inherit;
         }
 
+        /* Header with export button */
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .header-row h1 {
+            margin: 0;
+        }
+        .export-btn {
+            background: linear-gradient(135deg, #28a745, #1e7e34);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .export-btn:hover {
+            background: linear-gradient(135deg, #1e7e34, #155724);
+        }
+        .export-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .export-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+        .export-info {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
         /* Responsive */
         @media (max-width: 1200px) {
             .container {
@@ -152,7 +192,18 @@
     </style>
 </head>
 <body>
-    <h1>Asset Viewer - Apoyar CMDB</h1>
+    <div class="header-row">
+        <h1>Asset Viewer - Apoyar CMDB</h1>
+        <div>
+            <button class="export-btn" id="exportBtn" onclick="exportFiltered()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Export to CSV
+            </button>
+            <div class="export-info" id="exportInfo">Exports current filtered view</div>
+        </div>
+    </div>
 
     <div class="container">
         <div class="grid-panel">
@@ -309,6 +360,74 @@
             $('#assetTable tbody tr').removeClass('selected');
             selectedAssetId = null;
         }
+
+        function exportFiltered() {
+            // Get all currently filtered/visible rows from DataTable
+            const filteredData = dataTable.rows({ search: 'applied' }).data().toArray();
+            const assetIds = filteredData.map(row => row.id);
+
+            if (assetIds.length === 0) {
+                alert('No assets to export');
+                return;
+            }
+
+            // Update button state
+            const btn = document.getElementById('exportBtn');
+            const info = document.getElementById('exportInfo');
+            btn.disabled = true;
+            btn.innerHTML = 'Exporting...';
+            info.textContent = `Exporting ${assetIds.length} assets...`;
+
+            // Send export request
+            fetch('/api/export', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ asset_ids: assetIds })
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Export failed');
+                return response.blob();
+            })
+            .then(blob => {
+                // Create download link
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'cmdb_export.csv';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+
+                // Reset button
+                btn.disabled = false;
+                btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg> Export to CSV`;
+                info.textContent = `Exported ${assetIds.length} assets successfully`;
+            })
+            .catch(error => {
+                console.error('Export error:', error);
+                btn.disabled = false;
+                btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg> Export to CSV`;
+                info.textContent = 'Export failed. Please try again.';
+            });
+        }
+
+        // Update export info when table is filtered
+        $(document).ready(function() {
+            $('#assetTable').on('search.dt', function() {
+                const count = dataTable.rows({ search: 'applied' }).count();
+                document.getElementById('exportInfo').textContent =
+                    count === dataTable.rows().count()
+                        ? 'Exports all assets'
+                        : `Exports ${count} filtered assets`;
+            });
+        });
     </script>
 </body>
 </html>
